@@ -1,17 +1,12 @@
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
 const openapi = require('./openapi.json');
+const db = require('./db');
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
-
-let tasks = [
-  { id: 1, title: 'Learn Express', done: true },
-  { id: 2, title: 'Build CRUD API', done: false },
-  { id: 3, title: 'Publish to GitHub', done: false }
-];
 
 app.get('/', (req, res) => {
   res.json({
@@ -25,20 +20,20 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-
 app.get('/tasks', (req, res) => {
-  res.json(tasks);
+  const tasks = db.prepare('SELECT * FROM tasks').all();
+  res.json(tasks.map(t => ({ ...t, done: !!t.done })));
 });
 
 app.get('/tasks/:id', (req, res) => {
   const id = Number(req.params.id);
-  const task = tasks.find(t => t.id === id);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
 
   if (!task) {
     return res.status(404).json({ error: `Task ${id} not found` });
   }
 
-  res.json(task);
+  res.json({ ...task, done: !!task.done });
 });
 
 app.post('/tasks', (req, res) => {
@@ -48,21 +43,15 @@ app.post('/tasks', (req, res) => {
     return res.status(400).json({ error: 'Title is required and must be a non-empty string' });
   }
 
-  const nextId = tasks.length > 0 ? Math.max(...tasks.map(t => t.id)) + 1 : 1;
+  const result = db.prepare('INSERT INTO tasks (title, done) VALUES (?, 0)').run(title.trim());
+  const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
 
-  const newTask = {
-    id: nextId,
-    title: title.trim(),
-    done: false
-  };
-
-  tasks.push(newTask);
-  res.status(201).json(newTask);
+  res.status(201).json({ ...newTask, done: !!newTask.done });
 });
 
 app.put('/tasks/:id', (req, res) => {
   const id = Number(req.params.id);
-  const task = tasks.find(t => t.id === id);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
 
   if (!task) {
     return res.status(404).json({ error: `Task ${id} not found` });
@@ -80,21 +69,24 @@ app.put('/tasks/:id', (req, res) => {
     return res.status(400).json({ error: 'Provide title and/or done' });
   }
 
-  if (title !== undefined) task.title = title.trim();
-  if (done !== undefined) task.done = done;
+  const newTitle = title !== undefined ? title.trim() : task.title;
+  const newDone = done !== undefined ? (done ? 1 : 0) : task.done;
 
-  res.json(task);
+  db.prepare('UPDATE tasks SET title = ?, done = ? WHERE id = ?').run(newTitle, newDone, id);
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+  res.json({ ...updated, done: !!updated.done });
 });
 
 app.delete('/tasks/:id', (req, res) => {
   const id = Number(req.params.id);
-  const index = tasks.findIndex(t => t.id === id);
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
 
-  if (index === -1) {
+  if (!task) {
     return res.status(404).json({ error: `Task ${id} not found` });
   }
 
-  tasks.splice(index, 1);
+  db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
   res.status(204).send();
 });
 

@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const usePostgres = process.env.REPO === 'postgres';
 module.exports = usePostgres
   ? require('./postgres')

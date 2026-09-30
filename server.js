@@ -1,62 +1,44 @@
 const express = require('express');
 const swaggerUi = require('swagger-ui-express');
 const openapi = require('./openapi.json');
-const db = require('./db');
+const repo = require('./repository');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.json({
-    name: 'Task API',
-    version: '1.0',
-    endpoints: ['/tasks']
-  });
+  res.json({ name: 'Task API', version: '1.0', endpoints: ['/tasks'] });
 });
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.get('/tasks', (req, res) => {
-  const tasks = db.prepare('SELECT * FROM tasks').all();
-  res.json(tasks.map(t => ({ ...t, done: !!t.done })));
+app.get('/tasks', async (req, res) => {
+  const tasks = await repo.getAll();
+  res.json(tasks);
 });
 
-app.get('/tasks/:id', (req, res) => {
+app.get('/tasks/:id', async (req, res) => {
   const id = Number(req.params.id);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-
-  if (!task) {
-    return res.status(404).json({ error: `Task ${id} not found` });
-  }
-
-  res.json({ ...task, done: !!task.done });
+  const task = await repo.getById(id);
+  if (!task) return res.status(404).json({ error: `Task ${id} not found` });
+  res.json(task);
 });
 
-app.post('/tasks', (req, res) => {
+app.post('/tasks', async (req, res) => {
   const { title } = req.body;
-
   if (!title || typeof title !== 'string' || title.trim() === '') {
     return res.status(400).json({ error: 'Title is required and must be a non-empty string' });
   }
-
-  const result = db.prepare('INSERT INTO tasks (title, done) VALUES (?, 0)').run(title.trim());
-  const newTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
-
-  res.status(201).json({ ...newTask, done: !!newTask.done });
+  const task = await repo.create(title.trim());
+  res.status(201).json(task);
 });
 
-app.put('/tasks/:id', (req, res) => {
+app.put('/tasks/:id', async (req, res) => {
   const id = Number(req.params.id);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-
-  if (!task) {
-    return res.status(404).json({ error: `Task ${id} not found` });
-  }
-
   const { title, done } = req.body;
 
   if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
@@ -69,24 +51,18 @@ app.put('/tasks/:id', (req, res) => {
     return res.status(400).json({ error: 'Provide title and/or done' });
   }
 
-  const newTitle = title !== undefined ? title.trim() : task.title;
-  const newDone = done !== undefined ? (done ? 1 : 0) : task.done;
-
-  db.prepare('UPDATE tasks SET title = ?, done = ? WHERE id = ?').run(newTitle, newDone, id);
-
-  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-  res.json({ ...updated, done: !!updated.done });
+  const updated = await repo.update(id, {
+    title: title !== undefined ? title.trim() : undefined,
+    done
+  });
+  if (!updated) return res.status(404).json({ error: `Task ${id} not found` });
+  res.json(updated);
 });
 
-app.delete('/tasks/:id', (req, res) => {
+app.delete('/tasks/:id', async (req, res) => {
   const id = Number(req.params.id);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-
-  if (!task) {
-    return res.status(404).json({ error: `Task ${id} not found` });
-  }
-
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+  const ok = await repo.remove(id);
+  if (!ok) return res.status(404).json({ error: `Task ${id} not found` });
   res.status(204).send();
 });
 
